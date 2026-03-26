@@ -49,7 +49,9 @@ parser.add_argument('--dir', type=str, default="EMP-SSL-Training",
 parser.add_argument('--data', type=str, default="cifar10",
                     help='data (default: cifar10)')          
 parser.add_argument('--epoch', type=int, default=30,
-                    help='max number of epochs to finish (default: 30)')  
+                    help='max number of epochs to finish (default: 30)')
+parser.add_argument('--device', type=str, default="auto", choices=["auto", "cuda", "cpu"],
+                    help='device to use: auto, cuda, or cpu (default: auto)')
 
 args = parser.parse_args()
 
@@ -101,6 +103,33 @@ def cal_TCR(z, criterion, num_patches):
     loss = loss/num_patches
     return loss
 
+
+def resolve_device(requested_device):
+    if requested_device == "cpu":
+        return torch.device("cpu")
+
+    try:
+        cuda_available = torch.cuda.is_available()
+    except Exception as exc:
+        if requested_device == "cuda":
+            raise RuntimeError("CUDA was requested, but CUDA initialization failed.") from exc
+        print(f"CUDA initialization failed, falling back to CPU: {exc}")
+        return torch.device("cpu")
+
+    if requested_device == "cuda":
+        if not cuda_available:
+            raise RuntimeError(
+                "CUDA was requested, but no usable CUDA device is available. "
+                "Check the NVIDIA driver and the PyTorch CUDA build."
+            )
+        return torch.device("cuda")
+
+    if cuda_available:
+        return torch.device("cuda")
+
+    print("CUDA is unavailable, using CPU.")
+    return torch.device("cpu")
+
 ######################
 ## Prepare Training ##
 ######################
@@ -115,19 +144,20 @@ else:
     dataloader = DataLoader(train_dataset, batch_size=args.bs, shuffle=True, drop_last=True,num_workers=16)
 
 
-use_cuda = True
-device = torch.device("cuda" if use_cuda else "cpu")
+device = resolve_device(args.device)
+print(f"Using device: {device}")
     
     
 net = encoder(arch = args.arch)
-net = nn.DataParallel(net)
-net.cuda()
+if device.type == "cuda":
+    net = nn.DataParallel(net)
+net = net.to(device)
 
 
 opt = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-4,nesterov=True)
 opt = LARSWrapper(opt,eta=0.005,clip=True,exclude_bias_n_norm=True,)
 
-scaler = GradScaler()
+scaler = GradScaler(enabled=device.type == "cuda")
 if args.data == "imagenet-100":
     num_converge = (150000//args.bs)*args.epoch
 else:
@@ -150,7 +180,7 @@ def main():
             opt.zero_grad()
         
             data = torch.cat(data, dim=0) 
-            data = data.cuda()
+            data = data.to(device, non_blocking=device.type == "cuda")
             z_proj = net(data)
             
             z_list = z_proj.chunk(num_patches, dim=0)

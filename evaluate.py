@@ -34,6 +34,8 @@ parser.add_argument('--linear', type=bool, default=True,
 parser.add_argument('--knn', help='evaluate using kNN measuring cosine similarity', action='store_true')
 parser.add_argument('--model_path', type=str, default="",
                     help='model directory for eval')
+parser.add_argument('--device', type=str, default="auto", choices=["auto", "cuda", "cpu"],
+                    help='device to use: auto, cuda, or cpu (default: auto)')
 
             
 args = parser.parse_args()
@@ -74,7 +76,34 @@ def chunk_avg(x,n_chunks=2,normalize=False):
         return F.normalize(x.mean(0),dim=1)
 
 
-def test(net, train_loader, test_loader):
+def resolve_device(requested_device):
+    if requested_device == "cpu":
+        return torch.device("cpu")
+
+    try:
+        cuda_available = torch.cuda.is_available()
+    except Exception as exc:
+        if requested_device == "cuda":
+            raise RuntimeError("CUDA was requested, but CUDA initialization failed.") from exc
+        print(f"CUDA initialization failed, falling back to CPU: {exc}")
+        return torch.device("cpu")
+
+    if requested_device == "cuda":
+        if not cuda_available:
+            raise RuntimeError(
+                "CUDA was requested, but no usable CUDA device is available. "
+                "Check the NVIDIA driver and the PyTorch CUDA build."
+            )
+        return torch.device("cuda")
+
+    if cuda_available:
+        return torch.device("cuda")
+
+    print("CUDA is unavailable, using CPU.")
+    return torch.device("cpu")
+
+
+def test(net, train_loader, test_loader, device):
     
     train_z_full_list, train_y_list, test_z_full_list, test_y_list = [], [], [], []
     
@@ -82,6 +111,7 @@ def test(net, train_loader, test_loader):
         for x, y in tqdm(train_loader):
 
             x = torch.cat(x, dim = 0)
+            x = x.to(device, non_blocking=device.type == "cuda")
             
             z_proj, z_pre = net(x, is_test=True)
 
@@ -98,6 +128,7 @@ def test(net, train_loader, test_loader):
                 
         for x, y in tqdm(test_loader):
             x = torch.cat(x, dim = 0)
+            x = x.to(device, non_blocking=device.type == "cuda")
             
             z_proj, z_pre = net(x, is_test=True)
 
@@ -162,15 +193,16 @@ else:
     test_loader = DataLoader(test_data, batch_size=50, shuffle=True, num_workers=8)
 
 # Load Model and Checkpoint
-use_cuda = True
-device = torch.device("cuda" if use_cuda else "cpu")
+device = resolve_device(args.device)
+print(f"Using device: {device}")
 net = encoder(arch = args.arch)
-net = nn.DataParallel(net)
-save_dict = torch.load(args.model_path)
+if device.type == "cuda":
+    net = nn.DataParallel(net)
+save_dict = torch.load(args.model_path, map_location=device)
 net.load_state_dict(save_dict,strict=False)
-net.cuda()
+net = net.to(device)
 net.eval()
-test(net, memory_loader, test_loader)
+test(net, memory_loader, test_loader, device)
 
 
 
