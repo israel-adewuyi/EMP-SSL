@@ -36,6 +36,8 @@ parser.add_argument('--model_path', type=str, default="",
                     help='model directory for eval')
 parser.add_argument('--device', type=str, default="auto", choices=["auto", "cuda", "cpu"],
                     help='device to use: auto, cuda, or cpu (default: auto)')
+parser.add_argument('--num_workers', type=int, default=0,
+                    help='number of dataloader workers (default: 0)')
 
             
 args = parser.parse_args()
@@ -101,6 +103,21 @@ def resolve_device(requested_device):
 
     print("CUDA is unavailable, using CPU.")
     return torch.device("cpu")
+
+
+def build_dataloader(dataset, batch_size, shuffle, drop_last, num_workers, device):
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "shuffle": shuffle,
+        "drop_last": drop_last,
+        "num_workers": num_workers,
+        "pin_memory": device.type == "cuda",
+    }
+
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = True
+
+    return DataLoader(dataset, **loader_kwargs)
 
 
 def test(net, train_loader, test_loader, device):
@@ -174,27 +191,55 @@ def chunk_avg(x,n_chunks=2,normalize=False):
 
 
 torch.multiprocessing.set_sharing_strategy('file_system')
+device = resolve_device(args.device)
+print(f"Using device: {device}")
 
 
 #Get Dataset
 if args.data == "imagenet100" or args.data == "imagenet":
         
     memory_dataset = load_dataset(args.data, train=True, num_patch = test_patches)
-    memory_loader = DataLoader(memory_dataset, batch_size=50, shuffle=True, drop_last=True,num_workers=8)
+    memory_loader = build_dataloader(
+        memory_dataset,
+        batch_size=50,
+        shuffle=True,
+        drop_last=True,
+        num_workers=args.num_workers,
+        device=device,
+    )
 
     test_data = load_dataset(args.data, train=False, num_patch = test_patches)
-    test_loader = DataLoader(test_data, batch_size=50, shuffle=True, num_workers=8)
+    test_loader = build_dataloader(
+        test_data,
+        batch_size=50,
+        shuffle=True,
+        drop_last=False,
+        num_workers=args.num_workers,
+        device=device,
+    )
 
 else:
     memory_dataset = load_dataset(args.data, train=True, num_patch = test_patches)
-    memory_loader = DataLoader(memory_dataset, batch_size=50, shuffle=True, drop_last=True,num_workers=8)
+    memory_loader = build_dataloader(
+        memory_dataset,
+        batch_size=50,
+        shuffle=True,
+        drop_last=True,
+        num_workers=args.num_workers,
+        device=device,
+    )
 
     test_data = load_dataset(args.data, train=False, num_patch = test_patches)
-    test_loader = DataLoader(test_data, batch_size=50, shuffle=True, num_workers=8)
+    test_loader = build_dataloader(
+        test_data,
+        batch_size=50,
+        shuffle=True,
+        drop_last=False,
+        num_workers=args.num_workers,
+        device=device,
+    )
 
 # Load Model and Checkpoint
-device = resolve_device(args.device)
-print(f"Using device: {device}")
 net = encoder(arch = args.arch)
 if device.type == "cuda":
     net = nn.DataParallel(net)

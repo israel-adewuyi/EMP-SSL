@@ -52,6 +52,8 @@ parser.add_argument('--epoch', type=int, default=30,
                     help='max number of epochs to finish (default: 30)')
 parser.add_argument('--device', type=str, default="auto", choices=["auto", "cuda", "cpu"],
                     help='device to use: auto, cuda, or cpu (default: auto)')
+parser.add_argument('--num_workers', type=int, default=0,
+                    help='number of dataloader workers (default: 0)')
 
 args = parser.parse_args()
 
@@ -130,24 +132,50 @@ def resolve_device(requested_device):
     print("CUDA is unavailable, using CPU.")
     return torch.device("cpu")
 
+
+def build_dataloader(dataset, batch_size, shuffle, drop_last, num_workers, device):
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "shuffle": shuffle,
+        "drop_last": drop_last,
+        "num_workers": num_workers,
+        "pin_memory": device.type == "cuda",
+    }
+
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = True
+
+    return DataLoader(dataset, **loader_kwargs)
+
 ######################
 ## Prepare Training ##
 ######################
 torch.multiprocessing.set_sharing_strategy('file_system')
+device = resolve_device(args.device)
+print(f"Using device: {device}")
 
 if args.data == "imagenet100" or args.data == "imagenet":
     train_dataset = load_dataset("imagenet", train=True, num_patch = num_patches)
-    dataloader = DataLoader(train_dataset, batch_size=args.bs, shuffle=True, drop_last=True,num_workers=8)
+    dataloader = build_dataloader(
+        train_dataset,
+        batch_size=args.bs,
+        shuffle=True,
+        drop_last=True,
+        num_workers=args.num_workers,
+        device=device,
+    )
 
 else:
     train_dataset = load_dataset(args.data, train=True, num_patch = num_patches)
-    dataloader = DataLoader(train_dataset, batch_size=args.bs, shuffle=True, drop_last=True,num_workers=16)
+    dataloader = build_dataloader(
+        train_dataset,
+        batch_size=args.bs,
+        shuffle=True,
+        drop_last=True,
+        num_workers=args.num_workers,
+        device=device,
+    )
 
-
-device = resolve_device(args.device)
-print(f"Using device: {device}")
-    
-    
 net = encoder(arch = args.arch)
 if device.type == "cuda":
     net = nn.DataParallel(net)
@@ -157,7 +185,7 @@ net = net.to(device)
 opt = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-4,nesterov=True)
 opt = LARSWrapper(opt,eta=0.005,clip=True,exclude_bias_n_norm=True,)
 
-scaler = GradScaler(enabled=device.type == "cuda")
+scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
 if args.data == "imagenet-100":
     num_converge = (150000//args.bs)*args.epoch
 else:
