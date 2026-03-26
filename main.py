@@ -177,7 +177,7 @@ else:
     )
 
 net = encoder(arch = args.arch)
-if device.type == "cuda":
+if device.type == "cuda" and torch.cuda.device_count() > 1:
     net = nn.DataParallel(net)
 net = net.to(device)
 

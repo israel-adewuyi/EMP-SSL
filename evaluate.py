@@ -241,7 +241,7 @@ else:
 
 # Load Model and Checkpoint
 net = encoder(arch = args.arch)
-if device.type == "cuda":
+if device.type == "cuda" and torch.cuda.device_count() > 1:
     net = nn.DataParallel(net)
 save_dict = torch.load(args.model_path, map_location=device)
 net.load_state_dict(save_dict,strict=False)
