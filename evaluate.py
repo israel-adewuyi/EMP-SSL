@@ -2,6 +2,8 @@
 ## Import ##
 ############
 import argparse
+import json
+import os
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from model.model import encoder
@@ -34,6 +36,8 @@ parser.add_argument('--linear', type=bool, default=True,
 parser.add_argument('--knn', help='evaluate using kNN measuring cosine similarity', action='store_true')
 parser.add_argument('--model_path', type=str, default="",
                     help='model directory for eval')
+parser.add_argument('--results_json', type=str, default="",
+                    help='optional path to write structured evaluation results as JSON')
 parser.add_argument('--device', type=str, default="auto", choices=["auto", "cuda", "cpu"],
                     help='device to use: auto, cuda, or cpu (default: auto)')
 parser.add_argument('--num_workers', type=int, default=0,
@@ -121,6 +125,7 @@ def build_dataloader(dataset, batch_size, shuffle, drop_last, num_workers, devic
 
 
 def test(net, train_loader, test_loader, device):
+    results = {}
     
     train_z_full_list, train_y_list, test_z_full_list, test_y_list = [], [], [], []
     
@@ -174,12 +179,25 @@ def test(net, train_loader, test_loader, device):
         
     if args.linear:
         print("Using Linear Eval to evaluate accuracy")
-        linear(train_features_full, train_labels, test_features_full, test_labels, lr=args.lr, num_classes = num_classes)
+        results["linear"] = linear(
+            train_features_full,
+            train_labels,
+            test_features_full,
+            test_labels,
+            lr=args.lr,
+            num_classes=num_classes,
+        )
     
     if args.knn:
         print("Using KNN to evaluate accuracy")
         top1, top5 = knn_classifier.compute()
         print("KNN (top1/top5):", top1, top5)
+        results["knn"] = {
+            "top1": float(top1),
+            "top5": float(top5),
+        }
+
+    return results
     
 def chunk_avg(x,n_chunks=2,normalize=False):
     x_list = x.chunk(n_chunks,dim=0)
@@ -247,7 +265,25 @@ save_dict = torch.load(args.model_path, map_location=device)
 net.load_state_dict(save_dict,strict=False)
 net = net.to(device)
 net.eval()
-test(net, memory_loader, test_loader, device)
+results = test(net, memory_loader, test_loader, device)
+
+if args.results_json:
+    results_dir = os.path.dirname(args.results_json)
+    if results_dir:
+        os.makedirs(results_dir, exist_ok=True)
+    payload = {
+        "model_path": args.model_path,
+        "data": args.data,
+        "arch": args.arch,
+        "test_patches": args.test_patches,
+        "linear_lr": args.lr,
+        "used_linear": bool(args.linear),
+        "used_knn": bool(args.knn),
+        "results": results,
+    }
+    with open(args.results_json, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+    print(f"Saved evaluation results to {args.results_json}")
 
 
 

@@ -6,3 +6,4 @@ tqdm
 Pillow
 matplotlib
 scikit-learn
+tensorboard

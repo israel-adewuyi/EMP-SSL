@@ -195,6 +195,8 @@ def linear(train_features, train_labels, test_features, test_labels, lr=0.0075, 
     criterion = torch.nn.CrossEntropyLoss()
     
     test_acc_list = []
+    test_top5_list = []
+    train_top1_list = []
     for epoch in range(100):
         top1_train_accuracy = 0
         for counter, (x_batch, y_batch) in enumerate(train_loader):
@@ -230,10 +232,22 @@ def linear(train_features, train_labels, test_features, test_labels, lr=0.0075, 
         top5_accuracy /= (counter + 1)
         
         test_acc_list.append(top1_accuracy)
+        test_top5_list.append(top5_accuracy)
+        train_top1_list.append(top1_train_accuracy)
         
         print(f"Epoch {epoch}\tTop1 Train accuracy {top1_train_accuracy.item()}\tTop1 Test accuracy: {top1_accuracy.item()}\tTop5 test acc: {top5_accuracy.item()}")
     acc_vect = torch.tensor(test_acc_list)
     print('best linear test acc {}, last acc {}'.format(acc_vect.max().item(),acc_vect[-1].item()))
+    best_epoch = int(acc_vect.argmax().item())
+    return {
+        "best_linear_top1": acc_vect.max().item(),
+        "last_linear_top1": acc_vect[-1].item(),
+        "best_linear_top5": torch.tensor(test_top5_list)[best_epoch].item(),
+        "last_linear_top5": torch.tensor(test_top5_list)[-1].item(),
+        "best_linear_train_top1": torch.tensor(train_top1_list)[best_epoch].item(),
+        "last_linear_train_top1": torch.tensor(train_top1_list)[-1].item(),
+        "best_linear_epoch": best_epoch,
+    }
         
 
 

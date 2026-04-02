@@ -7,6 +7,7 @@ from patchsketch import (
     gather_selected_embeddings,
     patchsketch_loss,
     reshape_patch_embeddings,
+    sketch_diagnostics,
     select_representative_patches,
     shrink_frequent_directions,
 )
@@ -70,6 +71,43 @@ class PatchSketchTests(unittest.TestCase):
 
         for row in selected_indices:
             self.assertEqual(torch.unique(row).numel(), 3)
+
+    def test_selection_can_return_diagnostics(self):
+        torch.manual_seed(0)
+        batch_embeddings = torch.randn(2, 5, 4)
+
+        selected_indices, selected_scores, diagnostics = select_representative_patches(
+            batch_embeddings,
+            sketch_size=3,
+            selected_patches=2,
+            return_diagnostics=True,
+        )
+
+        self.assertEqual(selected_indices.shape, (2, 2))
+        self.assertEqual(selected_scores.shape, (2, 2))
+        self.assertEqual(diagnostics["all_scores"].shape, (2, 5))
+        self.assertEqual(diagnostics["selection_margin"].shape, (2,))
+        self.assertEqual(diagnostics["score_spread"].shape, (2,))
+        self.assertEqual(diagnostics["sketch_singular_values"].shape, (2, 3))
+        self.assertEqual(diagnostics["sketch_effective_rank"].shape, (2,))
+        self.assertEqual(diagnostics["sketch_nonzero_rows"].shape, (2,))
+        self.assertEqual(diagnostics["consensus_direction_norm"].shape, (2,))
+
+    def test_sketch_diagnostics_returns_unit_direction(self):
+        sketch = torch.tensor(
+            [
+                [3.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+                [0.0, 0.0, 0.0],
+            ]
+        )
+
+        diagnostics = sketch_diagnostics(sketch)
+
+        self.assertEqual(diagnostics["singular_values"].shape, (3,))
+        self.assertEqual(int(diagnostics["effective_rank"].item()), 2)
+        self.assertEqual(int(diagnostics["nonzero_rows"].item()), 2)
+        self.assertTrue(torch.isclose(diagnostics["direction"].norm(), torch.tensor(1.0)))
 
     def test_invariance_loss_is_zero_for_identical_embeddings(self):
         selected = torch.ones(2, 3, 4)

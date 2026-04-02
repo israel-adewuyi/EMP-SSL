@@ -62,19 +62,33 @@ def frequent_directions(rows, sketch_size, zero_tol=1e-12):
 
 def consensus_direction(sketch, zero_tol=1e-12):
     """Return the top right singular vector of the non-zero sketch rows."""
+    return sketch_diagnostics(sketch, zero_tol=zero_tol)["direction"]
+
+
+def sketch_diagnostics(sketch, zero_tol=1e-12):
+    """Return consensus-direction diagnostics for a sketch matrix."""
     if sketch.dim() != 2:
         raise ValueError("sketch must be a 2D tensor")
 
     row_norms = torch.norm(sketch, dim=1)
     nonzero_rows = row_norms > zero_tol
+    singular_values = sketch.new_zeros(min(sketch.shape))
 
     if not nonzero_rows.any():
         direction = sketch.new_zeros(sketch.size(1))
         direction[0] = 1.0
-        return direction
+        return {
+            "direction": direction,
+            "singular_values": singular_values,
+            "effective_rank": torch.tensor(0, device=sketch.device),
+            "nonzero_rows": torch.tensor(0, device=sketch.device),
+            "direction_norm": torch.norm(direction),
+        }
 
     active_sketch = sketch[nonzero_rows]
     _, singular_values, vh = torch.linalg.svd(active_sketch, full_matrices=False)
+    padded_singular_values = sketch.new_zeros(min(sketch.shape))
+    padded_singular_values[: singular_values.numel()] = singular_values
 
     if singular_values[0] <= zero_tol:
         fallback = active_sketch[0]
@@ -82,13 +96,23 @@ def consensus_direction(sketch, zero_tol=1e-12):
         if fallback_norm <= zero_tol:
             direction = sketch.new_zeros(sketch.size(1))
             direction[0] = 1.0
-            return direction
-        return fallback / fallback_norm
+        else:
+            direction = fallback / fallback_norm
+    else:
+        direction = vh[0]
 
-    return vh[0]
+    return {
+        "direction": direction,
+        "singular_values": padded_singular_values,
+        "effective_rank": (singular_values > zero_tol).sum(),
+        "nonzero_rows": nonzero_rows.sum(),
+        "direction_norm": torch.norm(direction),
+    }
 
 
-def select_representative_patches(batch_embeddings, sketch_size, selected_patches):
+def select_representative_patches(
+    batch_embeddings, sketch_size, selected_patches, return_diagnostics=False
+):
     """Select top-k patches per image using FD consensus scoring."""
     if batch_embeddings.dim() != 3:
         raise ValueError("batch_embeddings must be a 3D tensor [batch, patches, dim]")
@@ -101,18 +125,53 @@ def select_representative_patches(batch_embeddings, sketch_size, selected_patche
 
     all_indices = []
     all_scores = []
+    all_patch_scores = []
+    selection_margins = []
+    score_spreads = []
+    sketch_singular_values = []
+    sketch_effective_ranks = []
+    sketch_nonzero_rows = []
+    consensus_direction_norms = []
 
     for image_embeddings in batch_embeddings:
         sketch = frequent_directions(image_embeddings, sketch_size)
-        direction = consensus_direction(sketch)
+        diagnostics = sketch_diagnostics(sketch)
+        direction = diagnostics["direction"]
         scores = torch.abs(torch.matmul(image_embeddings, direction))
         top_scores, top_indices = torch.topk(
             scores, k=selected_patches, largest=True, sorted=True
         )
         all_indices.append(top_indices)
         all_scores.append(top_scores)
+        if return_diagnostics:
+            all_patch_scores.append(scores)
+            if selected_patches < num_patches:
+                sorted_scores = torch.sort(scores, descending=True).values
+                selection_margins.append(
+                    sorted_scores[selected_patches - 1] - sorted_scores[selected_patches]
+                )
+            else:
+                selection_margins.append(scores.new_zeros(()))
+            score_spreads.append(scores.max() - scores.min())
+            sketch_singular_values.append(diagnostics["singular_values"])
+            sketch_effective_ranks.append(diagnostics["effective_rank"])
+            sketch_nonzero_rows.append(diagnostics["nonzero_rows"])
+            consensus_direction_norms.append(diagnostics["direction_norm"])
 
-    return torch.stack(all_indices, dim=0), torch.stack(all_scores, dim=0)
+    all_indices = torch.stack(all_indices, dim=0)
+    all_scores = torch.stack(all_scores, dim=0)
+    if not return_diagnostics:
+        return all_indices, all_scores
+
+    return all_indices, all_scores, {
+        "all_scores": torch.stack(all_patch_scores, dim=0),
+        "selection_margin": torch.stack(selection_margins, dim=0),
+        "score_spread": torch.stack(score_spreads, dim=0),
+        "sketch_singular_values": torch.stack(sketch_singular_values, dim=0),
+        "sketch_effective_rank": torch.stack(sketch_effective_ranks, dim=0),
+        "sketch_nonzero_rows": torch.stack(sketch_nonzero_rows, dim=0),
+        "consensus_direction_norm": torch.stack(consensus_direction_norms, dim=0),
+    }
 
 
 def gather_selected_embeddings(batch_embeddings, selected_indices):
