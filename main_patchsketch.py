@@ -1,6 +1,5 @@
 import argparse
 import os
-import sys
 import time
 
 import torch
@@ -223,10 +222,6 @@ def should_log_interval(interval, step):
     return interval > 0 and (step + 1) % interval == 0
 
 
-def use_tqdm():
-    return sys.stderr.isatty()
-
-
 def normalize_for_tensorboard(images):
     return torch.clamp(images.detach().cpu() * 0.5 + 0.5, 0.0, 1.0)
 
@@ -330,7 +325,7 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, write
     }
     num_steps = 0
 
-    progress_bar = tqdm(enumerate(dataloader), total=len(dataloader), disable=not use_tqdm())
+    progress_bar = tqdm(enumerate(dataloader), total=len(dataloader))
     for step, (patch_views, labels) in progress_bar:
         step_start = time.perf_counter()
         if len(patch_views) != args.num_patches:
@@ -442,15 +437,14 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, write
         num_steps += 1
         global_step += 1
 
-        if use_tqdm():
-            progress_bar.set_postfix(
-                loss=f"{total_loss.item():.4f}",
-                inv=f"{inv_loss.item():.4f}",
-                cov=f"{cov_loss.item():.4f}",
-                score=f"{mean_topk_score:.4f}",
-                margin=f"{selection_margin:.4f}",
-                lr=f"{optimizer.param_groups[0]['lr']:.5f}",
-            )
+        progress_bar.set_postfix(
+            loss=f"{total_loss.item():.4f}",
+            inv=f"{inv_loss.item():.4f}",
+            cov=f"{cov_loss.item():.4f}",
+            score=f"{mean_topk_score:.4f}",
+            margin=f"{selection_margin:.4f}",
+            lr=f"{optimizer.param_groups[0]['lr']:.5f}",
+        )
 
     if num_steps == 0:
         raise RuntimeError("Training dataloader yielded no steps")
