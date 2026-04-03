@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import sys
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from model.model import encoder
@@ -73,6 +74,10 @@ def compute_accuracy(y_pred, y_true):
 knn_classifier = WeightedKNNClassifier()
 
 
+def use_tqdm():
+    return sys.stdout.isatty()
+
+
 def chunk_avg(x,n_chunks=2,normalize=False):
     x_list = x.chunk(n_chunks,dim=0)
     x = torch.stack(x_list,dim=0)
@@ -130,7 +135,7 @@ def test(net, train_loader, test_loader, device):
     train_z_full_list, train_y_list, test_z_full_list, test_y_list = [], [], [], []
     
     with torch.no_grad():
-        for x, y in tqdm(train_loader):
+        for x, y in tqdm(train_loader, disable=not use_tqdm()):
 
             x = torch.cat(x, dim = 0)
             x = x.to(device, non_blocking=device.type == "cuda")
@@ -148,7 +153,7 @@ def test(net, train_loader, test_loader, device):
 
             train_y_list.append(y)
                 
-        for x, y in tqdm(test_loader):
+        for x, y in tqdm(test_loader, disable=not use_tqdm()):
             x = torch.cat(x, dim = 0)
             x = x.to(device, non_blocking=device.type == "cuda")
             
