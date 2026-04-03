@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import itertools
 import json
 import os
@@ -67,10 +68,17 @@ def iter_sweep_configs():
 
 
 def build_run_slug(train_args):
-    parts = []
-    for key in sorted(train_args):
-        parts.append(f"{key}-{sanitize_value(train_args[key])}")
-    return "__".join(parts)
+    signature = hashlib.sha1(
+        json.dumps(train_args, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:10]
+    data = sanitize_value(train_args.get("data", "data"))
+    arch = sanitize_value(train_args.get("arch", "arch"))
+    return (
+        f"sk{train_args['sketch_size']}_sel{train_args['selected_patches']}"
+        f"_np{train_args['num_patches']}_bs{train_args['bs']}"
+        f"_lr{sanitize_value(train_args['lr'])}_cov{sanitize_value(train_args['cov_weight'])}"
+        f"_{data}_{arch}_{signature}"
+    )
 
 
 def build_train_args(combo_args):
@@ -78,7 +86,8 @@ def build_train_args(combo_args):
     train_args.update(combo_args)
     run_slug = build_run_slug(train_args)
     base_msg = sanitize_value(train_args.get("msg", "SWEEP"))
-    train_args["msg"] = f"{base_msg}_{run_slug}"
+    signature = run_slug.rsplit("_", 1)[-1]
+    train_args["msg"] = f"{base_msg}_{signature}"
     return train_args, run_slug
 
 
