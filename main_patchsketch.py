@@ -224,7 +224,7 @@ def should_log_interval(interval, step):
 
 
 def use_tqdm():
-    return sys.stdout.isatty()
+    return sys.stderr.isatty()
 
 
 def normalize_for_tensorboard(images):

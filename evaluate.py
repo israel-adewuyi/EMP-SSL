@@ -75,7 +75,7 @@ knn_classifier = WeightedKNNClassifier()
 
 
 def use_tqdm():
-    return sys.stdout.isatty()
+    return sys.stderr.isatty()
 
 
 def chunk_avg(x,n_chunks=2,normalize=False):
