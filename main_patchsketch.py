@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -342,6 +343,9 @@ def log_step_metrics(
 def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, writer, global_step):
     model.train()
 
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+
     metric_sums = {
         "loss": 0.0,
         "loss_inv": 0.0,
@@ -357,15 +361,22 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, write
         "batch_embedding_variance": 0.0,
         "grad_norm": 0.0,
         "param_norm": 0.0,
+        "data_time": 0.0,
+        "train_time": 0.0,
         "step_time": 0.0,
         "samples_per_sec": 0.0,
         "patches_per_sec": 0.0,
     }
     num_steps = 0
+    previous_step_finished = time.perf_counter()
+    peak_allocated_mb = 0.0
+    peak_reserved_mb = 0.0
 
     progress_bar = tqdm(enumerate(dataloader), total=len(dataloader))
     for step, (patch_views, labels) in progress_bar:
-        step_start = time.perf_counter()
+        batch_ready = time.perf_counter()
+        data_time = batch_ready - previous_step_finished
+        train_start = batch_ready
         if len(patch_views) != args.num_patches:
             raise ValueError(
                 f"Expected {args.num_patches} patch views, got {len(patch_views)}"
@@ -408,7 +419,13 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, write
         optimizer.step()
         scheduler.step()
 
-        step_time = time.perf_counter() - step_start
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+            peak_allocated_mb = torch.cuda.max_memory_allocated(device) / (1024 ** 2)
+            peak_reserved_mb = torch.cuda.max_memory_reserved(device) / (1024 ** 2)
+
+        train_time = time.perf_counter() - train_start
+        step_time = data_time + train_time
         param_norm = total_param_norm(model)
         selected_embedding_variance = (
             selected_embeddings.detach().var(dim=1, unbiased=False).mean().item()
@@ -438,6 +455,8 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, write
             "train/loss_inv": inv_loss.item(),
             "train/loss_cov": cov_loss.item(),
             "train/lr": optimizer.param_groups[0]["lr"],
+            "train/data_time": data_time,
+            "train/compute_time": train_time,
             "train/step_time": step_time,
             "train/samples_per_sec": samples_per_sec,
             "train/patches_per_sec": patches_per_sec,
@@ -452,6 +471,8 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, write
             "train/batch_embedding_variance": batch_embedding_variance,
             "train/grad_norm": grad_norm,
             "train/param_norm": param_norm,
+            "train/max_memory_allocated_mb": peak_allocated_mb,
+            "train/max_memory_reserved_mb": peak_reserved_mb,
         }
         selection_diagnostics["selected_scores"] = selected_scores.detach()
         log_step_metrics(
@@ -480,6 +501,8 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, write
         metric_sums["batch_embedding_variance"] += batch_embedding_variance
         metric_sums["grad_norm"] += grad_norm
         metric_sums["param_norm"] += param_norm
+        metric_sums["data_time"] += data_time
+        metric_sums["train_time"] += train_time
         metric_sums["step_time"] += step_time
         metric_sums["samples_per_sec"] += samples_per_sec
         metric_sums["patches_per_sec"] += patches_per_sec
@@ -493,12 +516,18 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, write
             score=f"{mean_topk_score:.4f}",
             margin=f"{selection_margin:.4f}",
             lr=f"{optimizer.param_groups[0]['lr']:.5f}",
+            data=f"{data_time:.2f}s",
+            train=f"{train_time:.2f}s",
+            peak_mem=f"{peak_allocated_mb / 1024:.2f}GiB",
         )
+        previous_step_finished = time.perf_counter()
 
     if num_steps == 0:
         raise RuntimeError("Training dataloader yielded no steps")
 
     metrics = {name: value / num_steps for name, value in metric_sums.items()}
+    metrics["max_memory_allocated_mb"] = peak_allocated_mb
+    metrics["max_memory_reserved_mb"] = peak_reserved_mb
     return metrics, global_step
 
 
@@ -517,9 +546,19 @@ def main():
     print(args)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[{datetime.now().isoformat(timespec='seconds')}] SETUP device={device}")
     log_dir = run_dir(args)
     os.makedirs(log_dir, exist_ok=True)
+    dataloader_started = time.perf_counter()
+    print(
+        f"[{datetime.now().isoformat(timespec='seconds')}] DATALOADER_SETUP_START "
+        f"workers={args.num_workers}"
+    )
     _, dataloader = build_train_dataloader(args)
+    print(
+        f"[{datetime.now().isoformat(timespec='seconds')}] DATALOADER_SETUP_DONE "
+        f"seconds={time.perf_counter() - dataloader_started:.2f}"
+    )
     model = build_model(args, device)
     optimizer = build_optimizer(model, args.lr)
     scheduler = build_scheduler(optimizer, args)
@@ -527,6 +566,10 @@ def main():
     global_step = 0
 
     for epoch in range(args.epoch):
+        print(
+            f"[{datetime.now().isoformat(timespec='seconds')}] TRAIN_EPOCH_START "
+            f"epoch={epoch + 1}/{args.epoch}"
+        )
         metrics, global_step = train_one_epoch(
             model, dataloader, optimizer, scheduler, device, args, writer, global_step
         )
@@ -538,6 +581,18 @@ def main():
             writer.add_scalar("epoch/mean_selected_score", metrics["mean_topk_score"], epoch)
             writer.add_scalar("epoch/selection_margin", metrics["selection_margin"], epoch)
             writer.add_scalar("epoch/sketch_effective_rank", metrics["sketch_effective_rank"], epoch)
+            writer.add_scalar("epoch/avg_data_time", metrics["data_time"], epoch)
+            writer.add_scalar("epoch/avg_compute_time", metrics["train_time"], epoch)
+            writer.add_scalar(
+                "epoch/max_memory_allocated_mb",
+                metrics["max_memory_allocated_mb"],
+                epoch,
+            )
+            writer.add_scalar(
+                "epoch/max_memory_reserved_mb",
+                metrics["max_memory_reserved_mb"],
+                epoch,
+            )
             writer.add_scalar(
                 "epoch/selected_embedding_variance",
                 metrics["selected_embedding_variance"],
@@ -557,6 +612,10 @@ def main():
             f"batch_embedding_variance is {metrics['batch_embedding_variance']:.6f}, "
             f"grad_norm is {metrics['grad_norm']:.6f}, "
             f"param_norm is {metrics['param_norm']:.6f}, "
+            f"avg_data_time is {metrics['data_time']:.3f}s, "
+            f"avg_train_time is {metrics['train_time']:.3f}s, "
+            f"peak_allocated is {metrics['max_memory_allocated_mb'] / 1024:.3f}GiB, "
+            f"peak_reserved is {metrics['max_memory_reserved_mb'] / 1024:.3f}GiB, "
             f"learning rate is {optimizer.param_groups[0]['lr']:.6f}, "
             f"checkpoint is {checkpoint_path}"
         )

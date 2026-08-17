@@ -11,3 +11,4 @@ Pillow
 matplotlib
 scikit-learn
 tensorboard
+nvitop

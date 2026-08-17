@@ -154,6 +154,13 @@ To inspect TensorBoard metrics while an experiment is running:
 tensorboard --logdir logs/PatchSketch-Training
 ```
 
+Training progress separates `data` time (waiting for the next DataLoader batch)
+from `train` time (forward, selection, backward, and optimizer work). On CUDA it
+also reports peak allocated GPU memory in GiB. TensorBoard records these as
+`train/data_time`, `train/compute_time`, `train/max_memory_allocated_mb`, and
+`train/max_memory_reserved_mb`. The sweep `summary.csv` records `train_seconds`,
+`eval_seconds`, and `total_seconds` for every run.
+
 
 #### Reproducing multi epochs results
 

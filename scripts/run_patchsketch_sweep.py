@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -226,6 +227,7 @@ def main():
         row.update(train_args)
         row.update(config["eval_args"])
         summary_rows.append(row)
+        run_started = time.perf_counter()
 
         if config["skip_completed_runs"] and eval_results_json_path.exists():
             row["status"] = "skipped_existing"
@@ -250,33 +252,64 @@ def main():
             " ".join(eval_command), encoding="utf-8"
         )
 
+        stage = "training"
         try:
-            print(f"[{run_index}] Training {run_slug}")
-            run_and_tee(
-                train_command,
-                {"CUDA_VISIBLE_DEVICES": config["train_cuda_visible_devices"]},
-                train_log_path,
+            train_started = time.perf_counter()
+            print(
+                f"[{datetime.now().isoformat(timespec='seconds')}] "
+                f"[{run_index}] TRAIN_START {run_slug}"
+            )
+            try:
+                run_and_tee(
+                    train_command,
+                    {"CUDA_VISIBLE_DEVICES": config["train_cuda_visible_devices"]},
+                    train_log_path,
+                )
+            finally:
+                row["train_seconds"] = round(time.perf_counter() - train_started, 3)
+            print(
+                f"[{datetime.now().isoformat(timespec='seconds')}] "
+                f"[{run_index}] TRAIN_DONE seconds={row['train_seconds']:.3f}"
             )
 
             if not checkpoint_path.exists():
                 raise FileNotFoundError(f"Expected checkpoint not found: {checkpoint_path}")
 
-            print(f"[{run_index}] Evaluating {run_slug}")
-            run_and_tee(
-                eval_command,
-                {"CUDA_VISIBLE_DEVICES": config["eval_cuda_visible_devices"]},
-                eval_log_path,
+            stage = "evaluation"
+            eval_started = time.perf_counter()
+            print(
+                f"[{datetime.now().isoformat(timespec='seconds')}] "
+                f"[{run_index}] EVAL_START {run_slug}"
+            )
+            try:
+                run_and_tee(
+                    eval_command,
+                    {"CUDA_VISIBLE_DEVICES": config["eval_cuda_visible_devices"]},
+                    eval_log_path,
+                )
+            finally:
+                row["eval_seconds"] = round(time.perf_counter() - eval_started, 3)
+            print(
+                f"[{datetime.now().isoformat(timespec='seconds')}] "
+                f"[{run_index}] EVAL_DONE seconds={row['eval_seconds']:.3f}"
             )
 
             row["status"] = "completed"
             row.update(load_eval_metrics(eval_results_json_path))
         except Exception as exc:
+            row["total_seconds"] = round(time.perf_counter() - run_started, 3)
             row["status"] = "failed"
             row["error"] = str(exc)
+            print(
+                f"[{datetime.now().isoformat(timespec='seconds')}] "
+                f"[{run_index}] {stage.upper()}_FAILED "
+                f"total_seconds={row['total_seconds']:.3f}: {exc}"
+            )
             write_summary_csv(summary_rows, summary_csv_path)
             if config["stop_on_failure"]:
                 raise
         else:
+            row["total_seconds"] = round(time.perf_counter() - run_started, 3)
             write_summary_csv(summary_rows, summary_csv_path)
 
     finished_at = datetime.now().isoformat(timespec="seconds")
