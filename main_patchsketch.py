@@ -14,7 +14,7 @@ from dataset.datasets import load_dataset
 from lars import LARSWrapper
 from model.model import encoder
 from patchsketch import (
-    gather_selected_embeddings,
+    gather_selected_patches,
     patchsketch_loss,
     reshape_patch_embeddings,
     select_representative_patches,
@@ -52,6 +52,13 @@ def parse_args():
         type=str,
         default="resnet18-cifar",
         help="network architecture (default: resnet18-cifar)",
+    )
+    parser.add_argument(
+        "--norm",
+        type=str,
+        choices=["batch", "layer"],
+        default="batch",
+        help="normalization used throughout the encoder (default: batch)",
     )
     parser.add_argument("--bs", type=int, default=100, help="batch size (default: 100)")
     parser.add_argument(
@@ -140,7 +147,7 @@ def build_train_dataloader(args, num_workers=None):
 
 
 def build_model(args, device):
-    net = encoder(arch=args.arch)
+    net = encoder(arch=args.arch, norm=args.norm)
     if device.type == "cuda":
         net = nn.DataParallel(net)
     return net.to(device)
@@ -171,8 +178,36 @@ def build_scheduler(optimizer, args):
 def run_dir(args):
     return (
         f"./logs/{args.dir}/sketch{args.sketch_size}_topk{args.selected_patches}"
-        f"_numpatch{args.num_patches}_bs{args.bs}_lr{args.lr}_{args.msg}"
+        f"_norm{args.norm}_numpatch{args.num_patches}_bs{args.bs}_lr{args.lr}_{args.msg}"
     )
+
+
+def select_candidate_embeddings(
+    model, flat_patches, batch_size, num_patches, sketch_size, selected_patches
+):
+    """Select patch indices without a graph or training-state updates."""
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            flat_embeddings = model(flat_patches)
+            batch_embeddings = reshape_patch_embeddings(
+                flat_embeddings,
+                batch_size=batch_size,
+                num_patches=num_patches,
+            )
+            selected_indices, selected_scores, diagnostics = (
+                select_representative_patches(
+                    batch_embeddings,
+                    sketch_size=sketch_size,
+                    selected_patches=selected_patches,
+                    return_diagnostics=True,
+                )
+            )
+    finally:
+        model.train(was_training)
+
+    return batch_embeddings, selected_indices, selected_scores, diagnostics
 
 
 def checkpoint_state_dict(model):
@@ -336,21 +371,31 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, write
         batch_size = labels.size(0)
         optimizer.zero_grad()
 
-        flat_patches = torch.cat(patch_views, dim=0).to(device, non_blocking=device.type == "cuda")
-        flat_embeddings = model(flat_patches)
-        batch_embeddings = reshape_patch_embeddings(
-            flat_embeddings, batch_size=batch_size, num_patches=args.num_patches
+        flat_patches = torch.cat(patch_views, dim=0).to(
+            device, non_blocking=device.type == "cuda"
         )
 
-        with torch.no_grad():
-            selected_indices, selected_scores, selection_diagnostics = select_representative_patches(
-                batch_embeddings.detach(),
+        batch_embeddings, selected_indices, selected_scores, selection_diagnostics = (
+            select_candidate_embeddings(
+                model,
+                flat_patches,
+                batch_size=batch_size,
+                num_patches=args.num_patches,
                 sketch_size=args.sketch_size,
                 selected_patches=args.selected_patches,
-                return_diagnostics=True,
             )
+        )
 
-        selected_embeddings = gather_selected_embeddings(batch_embeddings, selected_indices)
+        selected_patches = gather_selected_patches(
+            flat_patches,
+            selected_indices,
+            batch_size=batch_size,
+            num_patches=args.num_patches,
+        )
+        flat_selected_embeddings = model(selected_patches)
+        selected_embeddings = flat_selected_embeddings.view(
+            batch_size, args.selected_patches, -1
+        )
         total_loss, inv_loss, cov_loss = patchsketch_loss(
             selected_embeddings, cov_weight=args.cov_weight
         )
@@ -382,7 +427,8 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, args, write
             selection_diagnostics["consensus_direction_norm"].float().mean().item()
         )
         samples_per_sec = batch_size / max(step_time, 1e-12)
-        patches_per_sec = (batch_size * args.num_patches) / max(step_time, 1e-12)
+        encoder_patches = batch_size * (args.num_patches + args.selected_patches)
+        patches_per_sec = encoder_patches / max(step_time, 1e-12)
 
         step_scalars = {
             "train/loss_total": total_loss.item(),

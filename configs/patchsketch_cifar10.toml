@@ -1,0 +1,40 @@
+[sweep]
+name = "cifar10_patchsketch_grid"
+output_root = "sweeps/cifar10_patchsketch_grid"
+train_cuda_visible_devices = "3"
+eval_cuda_visible_devices = "2"
+stop_on_failure = true
+skip_completed_runs = true
+
+[train.args]
+data = "cifar10"
+arch = "resnet18-cifar"
+num_patches = 200
+bs = 32
+epoch = 1
+lr = 0.3
+cov_weight = 1.0
+dir = "PatchSketch-Training"
+msg = "SWEEP"
+hist_every_n_steps = 100
+image_every_n_steps = 0
+
+[train.grid]
+norm = ["batch", "layer"]
+sketch_size = [10]
+selected_patches = [25, 50, 100]
+
+[train.flags]
+disable_tensorboard = false
+
+[evaluate.args]
+data = "cifar10"
+arch = "resnet18-cifar"
+test_patches = 128
+lr = 0.03
+linear = true
+device = "auto"
+num_workers = 0
+
+[evaluate.flags]
+knn = false

@@ -5,6 +5,7 @@ import torch
 from patchsketch import (
     covariance_loss,
     gather_selected_embeddings,
+    gather_selected_patches,
     patchsketch_loss,
     reshape_patch_embeddings,
     sketch_diagnostics,
@@ -160,6 +161,19 @@ class PatchSketchTests(unittest.TestCase):
 
         grad_mask = batch_embeddings.grad.abs().sum(dim=2) > 0
         self.assertTrue(torch.equal(grad_mask, selected_mask))
+
+    def test_gather_selected_patches_restores_image_major_selection(self):
+        flat_patches = torch.tensor(
+            [[0.0], [1.0], [10.0], [11.0], [20.0], [21.0]]
+        )
+        selected_indices = torch.tensor([[2, 0], [1, 2]])
+
+        selected = gather_selected_patches(
+            flat_patches, selected_indices, batch_size=2, num_patches=3
+        )
+
+        expected = torch.tensor([[20.0], [0.0], [11.0], [21.0]])
+        self.assertTrue(torch.equal(selected, expected))
 
 
 if __name__ == "__main__":

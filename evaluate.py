@@ -28,6 +28,8 @@ parser.add_argument('--data', type=str, default="cifar10",
                     help='dataset (default: cifar10)')  
 parser.add_argument('--arch', type=str, default="resnet18-cifar",
                     help='network architecture (default: resnet18-cifar)')
+parser.add_argument('--norm', type=str, choices=['batch', 'layer'], default='batch',
+                    help='normalization used by the trained encoder (default: batch)')
 
 parser.add_argument('--lr', type=float, default=0.03,
                     help='learning rate for linear eval (default: 0.03)')        
@@ -258,7 +260,7 @@ else:
     )
 
 # Load Model and Checkpoint
-net = encoder(arch = args.arch)
+net = encoder(arch=args.arch, norm=args.norm)
 if device.type == "cuda" and torch.cuda.device_count() > 1:
     net = nn.DataParallel(net)
 save_dict = torch.load(args.model_path, map_location=device)
@@ -275,6 +277,7 @@ if args.results_json:
         "model_path": args.model_path,
         "data": args.data,
         "arch": args.arch,
+        "norm": args.norm,
         "test_patches": args.test_patches,
         "linear_lr": args.lr,
         "used_linear": bool(args.linear),

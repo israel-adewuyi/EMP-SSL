@@ -1,3 +1,4 @@
+import argparse
 import csv
 import hashlib
 import itertools
@@ -5,54 +6,77 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from datetime import datetime
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "patchsketch_cifar10.toml"
 
 
-# Edit this block for your sweep.
-SWEEP_NAME = "cifar10_patchsketch_grid"
-OUTPUT_ROOT = REPO_ROOT / "sweeps" / SWEEP_NAME
-TRAIN_CUDA_VISIBLE_DEVICES = "3"
-EVAL_CUDA_VISIBLE_DEVICES = "2"
-STOP_ON_FAILURE = True
-SKIP_COMPLETED_RUNS = True
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run a PatchSketch TOML experiment sweep")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help=f"experiment TOML file (default: {DEFAULT_CONFIG_PATH.relative_to(REPO_ROOT)})",
+    )
+    return parser.parse_args()
 
-TRAIN_BASE_ARGS = {
-    "data": "cifar10",
-    "arch": "resnet18-cifar",
-    "num_patches": 200,
-    "bs": 32,
-    "epoch": 1,
-    "lr": 0.3,
-    "cov_weight": 1.0,
-    "dir": "PatchSketch-Training",
-    "msg": "SWEEP",
-    "hist_every_n_steps": 100,
-    "image_every_n_steps": 0,
-}
 
-TRAIN_SWEEP_GRID = {
-    "sketch_size": [10],
-    "selected_patches": [25, 50, 100],
-}
+def require_table(parent, key, context="root"):
+    value = parent.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected TOML table [{key}] under {context}")
+    return value
 
-TRAIN_FLAGS = {
-    "disable_tensorboard": False,
-}
 
-EVAL_ARGS = {
-    "data": "cifar10",
-    "arch": "resnet18-cifar",
-    "test_patches": 128,
-    "num_workers": 0,
-}
+def load_sweep_config(config_path):
+    config_path = Path(config_path)
+    if not config_path.is_absolute():
+        config_path = REPO_ROOT / config_path
+    config_path = config_path.resolve()
 
-EVAL_FLAGS = {
-    "knn": False,
-}
+    with config_path.open("rb") as handle:
+        payload = tomllib.load(handle)
+
+    sweep = require_table(payload, "sweep")
+    train = require_table(payload, "train")
+    evaluate = require_table(payload, "evaluate")
+
+    name = sweep.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("[sweep].name must be a non-empty string")
+
+    output_root = Path(sweep.get("output_root", f"sweeps/{name}"))
+    if not output_root.is_absolute():
+        output_root = REPO_ROOT / output_root
+
+    train_grid = require_table(train, "grid", context="[train]")
+    for key, values in train_grid.items():
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"[train.grid].{key} must be a non-empty array")
+
+    return {
+        "path": config_path,
+        "name": name,
+        "output_root": output_root.resolve(),
+        "train_cuda_visible_devices": str(
+            sweep.get("train_cuda_visible_devices", "0")
+        ),
+        "eval_cuda_visible_devices": str(
+            sweep.get("eval_cuda_visible_devices", "0")
+        ),
+        "stop_on_failure": bool(sweep.get("stop_on_failure", True)),
+        "skip_completed_runs": bool(sweep.get("skip_completed_runs", True)),
+        "train_args": require_table(train, "args", context="[train]"),
+        "train_grid": train_grid,
+        "train_flags": train.get("flags", {}),
+        "eval_args": require_table(evaluate, "args", context="[evaluate]"),
+        "eval_flags": evaluate.get("flags", {}),
+    }
 
 
 def sanitize_value(value):
@@ -60,9 +84,9 @@ def sanitize_value(value):
     return "".join(char if char.isalnum() or char in {"-", "_", "."} else "-" for char in text)
 
 
-def iter_sweep_configs():
-    keys = list(TRAIN_SWEEP_GRID.keys())
-    values = [TRAIN_SWEEP_GRID[key] for key in keys]
+def iter_sweep_configs(sweep_grid):
+    keys = list(sweep_grid.keys())
+    values = [sweep_grid[key] for key in keys]
     for combo in itertools.product(*values):
         yield dict(zip(keys, combo))
 
@@ -73,16 +97,17 @@ def build_run_slug(train_args):
     ).hexdigest()[:10]
     data = sanitize_value(train_args.get("data", "data"))
     arch = sanitize_value(train_args.get("arch", "arch"))
+    norm = sanitize_value(train_args.get("norm", "batch"))
     return (
         f"sk{train_args['sketch_size']}_sel{train_args['selected_patches']}"
         f"_np{train_args['num_patches']}_bs{train_args['bs']}"
         f"_lr{sanitize_value(train_args['lr'])}_cov{sanitize_value(train_args['cov_weight'])}"
-        f"_{data}_{arch}_{signature}"
+        f"_{data}_{arch}_{norm}_{signature}"
     )
 
 
-def build_train_args(combo_args):
-    train_args = dict(TRAIN_BASE_ARGS)
+def build_train_args(base_args, combo_args):
+    train_args = dict(base_args)
     train_args.update(combo_args)
     run_slug = build_run_slug(train_args)
     base_msg = sanitize_value(train_args.get("msg", "SWEEP"))
@@ -94,7 +119,8 @@ def build_train_args(combo_args):
 def patchsketch_run_dir(train_args):
     return REPO_ROOT / "logs" / str(train_args["dir"]) / (
         f"sketch{train_args['sketch_size']}_topk{train_args['selected_patches']}"
-        f"_numpatch{train_args['num_patches']}_bs{train_args['bs']}_lr{train_args['lr']}"
+        f"_norm{train_args['norm']}_numpatch{train_args['num_patches']}"
+        f"_bs{train_args['bs']}_lr{train_args['lr']}"
         f"_{train_args['msg']}"
     )
 
@@ -165,15 +191,23 @@ def write_summary_csv(rows, summary_csv_path):
 
 
 def main():
-    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-    summary_csv_path = OUTPUT_ROOT / "summary.csv"
+    cli_args = parse_args()
+    config = load_sweep_config(cli_args.config)
+    output_root = config["output_root"]
+    output_root.mkdir(parents=True, exist_ok=True)
+    summary_csv_path = output_root / "summary.csv"
     summary_rows = []
     started_at = datetime.now().isoformat(timespec="seconds")
-    print(f"Starting PatchSketch sweep '{SWEEP_NAME}' at {started_at}")
+    print(
+        f"Starting PatchSketch sweep '{config['name']}' at {started_at} "
+        f"from {config['path']}"
+    )
 
-    for run_index, combo_args in enumerate(iter_sweep_configs(), start=1):
-        train_args, run_slug = build_train_args(combo_args)
-        run_output_dir = OUTPUT_ROOT / run_slug
+    for run_index, combo_args in enumerate(
+        iter_sweep_configs(config["train_grid"]), start=1
+    ):
+        train_args, run_slug = build_train_args(config["train_args"], combo_args)
+        run_output_dir = output_root / run_slug
         run_output_dir.mkdir(parents=True, exist_ok=True)
         train_log_path = run_output_dir / "train.log"
         eval_log_path = run_output_dir / "eval.log"
@@ -190,10 +224,10 @@ def main():
             "checkpoint_path": str(checkpoint_path),
         }
         row.update(train_args)
-        row.update(EVAL_ARGS)
+        row.update(config["eval_args"])
         summary_rows.append(row)
 
-        if SKIP_COMPLETED_RUNS and eval_results_json_path.exists():
+        if config["skip_completed_runs"] and eval_results_json_path.exists():
             row["status"] = "skipped_existing"
             row.update(load_eval_metrics(eval_results_json_path))
             print(f"[{run_index}] Skipping existing run {run_slug}")
@@ -201,12 +235,13 @@ def main():
             continue
 
         train_command = [sys.executable, "main_patchsketch.py"]
-        train_command.extend(build_cli_args(train_args, TRAIN_FLAGS))
+        train_command.extend(build_cli_args(train_args, config["train_flags"]))
         eval_command = [sys.executable, "evaluate.py"]
-        eval_arg_map = dict(EVAL_ARGS)
+        eval_arg_map = dict(config["eval_args"])
+        eval_arg_map["norm"] = train_args["norm"]
         eval_arg_map["model_path"] = str(checkpoint_path)
         eval_arg_map["results_json"] = str(eval_results_json_path)
-        eval_command.extend(build_cli_args(eval_arg_map, EVAL_FLAGS))
+        eval_command.extend(build_cli_args(eval_arg_map, config["eval_flags"]))
 
         (run_output_dir / "train_command.txt").write_text(
             " ".join(train_command), encoding="utf-8"
@@ -219,7 +254,7 @@ def main():
             print(f"[{run_index}] Training {run_slug}")
             run_and_tee(
                 train_command,
-                {"CUDA_VISIBLE_DEVICES": TRAIN_CUDA_VISIBLE_DEVICES},
+                {"CUDA_VISIBLE_DEVICES": config["train_cuda_visible_devices"]},
                 train_log_path,
             )
 
@@ -229,7 +264,7 @@ def main():
             print(f"[{run_index}] Evaluating {run_slug}")
             run_and_tee(
                 eval_command,
-                {"CUDA_VISIBLE_DEVICES": EVAL_CUDA_VISIBLE_DEVICES},
+                {"CUDA_VISIBLE_DEVICES": config["eval_cuda_visible_devices"]},
                 eval_log_path,
             )
 
@@ -239,13 +274,13 @@ def main():
             row["status"] = "failed"
             row["error"] = str(exc)
             write_summary_csv(summary_rows, summary_csv_path)
-            if STOP_ON_FAILURE:
+            if config["stop_on_failure"]:
                 raise
         else:
             write_summary_csv(summary_rows, summary_csv_path)
 
     finished_at = datetime.now().isoformat(timespec="seconds")
-    print(f"Finished PatchSketch sweep '{SWEEP_NAME}' at {finished_at}")
+    print(f"Finished PatchSketch sweep '{config['name']}' at {finished_at}")
     print(f"Summary written to {summary_csv_path}")
 
 

@@ -45,6 +45,21 @@ For ImageNet100
 python main.py --data imagenet100 --epoch 2 --patch_sim 200 --arch 'resnet18-imagenet' --num_patches 20 --lr 0.3
 ```
 
+### PatchSketch experiment sweeps
+
+PatchSketch sweep settings live in `configs/patchsketch_cifar10.toml`. Duplicate that
+file for a new experiment, edit the TOML values, and run:
+
+```bash
+python scripts/run_patchsketch_sweep.py --config configs/patchsketch_cifar10.toml
+```
+
+`[train.args]` and `[evaluate.args]` contain fixed command-line arguments,
+`[train.grid]` defines the Cartesian-product sweep, and the corresponding `flags`
+tables control boolean command-line flags. See
+[`configs/config_explainer.md`](configs/config_explainer.md) for a one-line summary
+of every setting.
+
 
 #### Reproducing multi epochs results
 

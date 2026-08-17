@@ -184,6 +184,26 @@ def gather_selected_embeddings(batch_embeddings, selected_indices):
     return torch.gather(batch_embeddings, dim=1, index=gather_index)
 
 
+def gather_selected_patches(flat_patches, selected_indices, batch_size, num_patches):
+    """Gather selected raw patches from patch-major flattened input."""
+    if flat_patches.dim() < 2:
+        raise ValueError("flat_patches must include batch and feature dimensions")
+    if selected_indices.shape[0] != batch_size:
+        raise ValueError("selected_indices batch dimension must match batch_size")
+    if flat_patches.size(0) != batch_size * num_patches:
+        raise ValueError("flat_patches first dimension must equal batch_size * num_patches")
+
+    patch_shape = flat_patches.shape[1:]
+    batch_patches = flat_patches.view(num_patches, batch_size, *patch_shape)
+    batch_patches = batch_patches.transpose(0, 1)
+    gather_shape = (batch_size, selected_indices.size(1), *([1] * len(patch_shape)))
+    gather_index = selected_indices.view(gather_shape).expand(
+        batch_size, selected_indices.size(1), *patch_shape
+    )
+    selected = torch.gather(batch_patches, dim=1, index=gather_index)
+    return selected.reshape(batch_size * selected_indices.size(1), *patch_shape)
+
+
 def invariance_loss(selected_embeddings):
     centered = selected_embeddings - selected_embeddings.mean(dim=1, keepdim=True)
     squared_distances = centered.pow(2).sum(dim=2)
