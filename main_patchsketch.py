@@ -86,6 +86,12 @@ def parse_args():
         help="max number of epochs to finish (default: 30)",
     )
     parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=0,
+        help="number of training DataLoader workers; 0 avoids shared memory (default: 0)",
+    )
+    parser.add_argument(
         "--hist_every_n_steps",
         type=int,
         default=100,
@@ -117,13 +123,10 @@ def validate_args(args):
             "selected_patches must satisfy 2 <= selected_patches <= num_patches"
         )
 
+    if args.num_workers < 0:
+        raise ValueError("num_workers must be non-negative")
+
     return args
-
-
-def default_num_workers(data_name):
-    if data_name in {"imagenet100", "imagenet"}:
-        return 8
-    return 16
 
 
 def load_train_dataset(args):
@@ -134,7 +137,7 @@ def load_train_dataset(args):
 def build_train_dataloader(args, num_workers=None):
     train_dataset = load_train_dataset(args)
     if num_workers is None:
-        num_workers = default_num_workers(args.data)
+        num_workers = args.num_workers
 
     dataloader = DataLoader(
         train_dataset,

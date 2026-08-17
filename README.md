@@ -118,6 +118,7 @@ use one value in every array, reduce `epoch`, and optionally disable TensorBoard
 ```toml
 [train.args]
 epoch = 1
+num_workers = 0
 
 [train.grid]
 norm = ["batch"]

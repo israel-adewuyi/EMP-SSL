@@ -23,6 +23,7 @@ Every setting in `patchsketch_cifar10.toml` is summarized below; values under
 | `train.args.num_patches` | Sets the number of candidate augmented patches generated per image. |
 | `train.args.bs` | Sets the number of source images in each training batch. |
 | `train.args.epoch` | Sets the number of training epochs. |
+| `train.args.num_workers` | Sets training DataLoader workers; use `0` in shared-memory-limited containers. |
 | `train.args.lr` | Sets the training optimizer learning rate. |
 | `train.args.cov_weight` | Weights the covariance-decorrelation term in the PatchSketch loss. |
 | `train.args.dir` | Names the parent directory created under `logs/`. |

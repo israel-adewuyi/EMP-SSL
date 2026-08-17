@@ -12,6 +12,7 @@ arch = "resnet18-cifar"
 num_patches = 200
 bs = 32
 epoch = 1
+num_workers = 0
 lr = 0.3
 cov_weight = 1.0
 dir = "PatchSketch-Training"

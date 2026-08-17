@@ -14,6 +14,7 @@ class SweepConfigTests(unittest.TestCase):
 
         self.assertEqual(config["name"], "cifar10_patchsketch_grid")
         self.assertEqual(config["train_args"]["num_patches"], 200)
+        self.assertEqual(config["train_args"]["num_workers"], 0)
         self.assertEqual(config["train_grid"]["selected_patches"], [25, 50, 100])
         self.assertEqual(config["train_grid"]["norm"], ["batch", "layer"])
         self.assertEqual(config["eval_args"]["test_patches"], 128)
