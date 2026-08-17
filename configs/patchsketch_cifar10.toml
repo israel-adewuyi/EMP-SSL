@@ -1,8 +1,8 @@
 [sweep]
 name = "cifar10_patchsketch_grid"
 output_root = "sweeps/cifar10_patchsketch_grid"
-train_cuda_visible_devices = "3"
-eval_cuda_visible_devices = "2"
+train_cuda_visible_devices = "0"
+eval_cuda_visible_devices = "0"
 stop_on_failure = true
 skip_completed_runs = true
 

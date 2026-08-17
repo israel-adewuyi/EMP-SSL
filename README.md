@@ -14,20 +14,63 @@ This repository contains the implementation for the paper "EMP-SSL: Towards Self
 ## Preparing Training Data
 Cifar10 and Cifar100 can be downloaded automatically in the script. ImageNet100 is a special subset of ImageNet. Details can be found in this [link](https://github.com/HobbitLong/CMC/issues/21).
 
-## Getting Started
-Current code implementation supports Cifar10, Cifar100 and ImageNet100.
+## Getting started
 
-To get started with the EMP-SSL implementation, follow these instructions:
+The current implementation supports CIFAR-10, CIFAR-100, and ImageNet-100.
+PatchSketch TOML experiments require Python 3.11 or newer.
 
-### 1. Clone this repository
+### 1. Create an environment
+
 ```bash
 git clone https://github.com/tsb0601/emp-ssl.git
 cd emp-ssl
-``` 
-### 2. Install required packages
+python -m venv .venv
 ```
-pip install -r requirements.txt
+
+Activate it on Linux or macOS:
+
+```bash
+source .venv/bin/activate
 ```
+
+Or on Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+### 2. Install dependencies
+
+For a generic installation, including CPU-only environments:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+For the pinned PyTorch 2.6 CUDA 12.4 environment used by this project:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements-cu124.txt
+```
+
+Verify the installation and whether CUDA is visible:
+
+```bash
+python -c "import torch; print(torch.__version__); print('CUDA:', torch.cuda.is_available())"
+```
+
+Run the test suite before launching a long experiment:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+CIFAR-10 and CIFAR-100 download automatically into `./data` on first use.
+ImageNet-100 requires local ImageFolder paths to be configured in
+`dataset/datasets.py`.
+
 ### 3. Training
 
 #### Reproducing 1-epoch results
@@ -47,11 +90,48 @@ python main.py --data imagenet100 --epoch 2 --patch_sim 200 --arch 'resnet18-ima
 
 ### PatchSketch experiment sweeps
 
-PatchSketch sweep settings live in `configs/patchsketch_cifar10.toml`. Duplicate that
-file for a new experiment, edit the TOML values, and run:
+PatchSketch sweep settings live in `configs/patchsketch_cifar10.toml`. First copy
+that file so each experiment keeps its own reproducible configuration:
+
+```powershell
+Copy-Item configs\patchsketch_cifar10.toml configs\my_experiment.toml
+```
+
+On Linux or macOS, use `cp` instead of `Copy-Item`. Edit the copied file and set
+both CUDA device entries to `"0"` when using a single GPU:
+
+```toml
+[sweep]
+train_cuda_visible_devices = "0"
+eval_cuda_visible_devices = "0"
+
+[train.grid]
+norm = ["batch", "layer"]
+sketch_size = [10]
+selected_patches = [25, 50, 100]
+```
+
+Every array under `[train.grid]` participates in a Cartesian-product sweep. The
+example above runs 2 × 1 × 3 = 6 experiments. For a quick single experiment,
+use one value in every array, reduce `epoch`, and optionally disable TensorBoard:
+
+```toml
+[train.args]
+epoch = 1
+
+[train.grid]
+norm = ["batch"]
+sketch_size = [10]
+selected_patches = [25]
+
+[train.flags]
+disable_tensorboard = true
+```
+
+Run the configured training-and-evaluation sweep from the repository root:
 
 ```bash
-python scripts/run_patchsketch_sweep.py --config configs/patchsketch_cifar10.toml
+python scripts/run_patchsketch_sweep.py --config configs/my_experiment.toml
 ```
 
 `[train.args]` and `[evaluate.args]` contain fixed command-line arguments,
@@ -59,6 +139,19 @@ python scripts/run_patchsketch_sweep.py --config configs/patchsketch_cifar10.tom
 tables control boolean command-line flags. See
 [`configs/config_explainer.md`](configs/config_explainer.md) for a one-line summary
 of every setting.
+
+The runner trains and evaluates each combination sequentially. It writes the
+aggregate table to `<output_root>/summary.csv`, per-run logs and evaluation JSON
+under `<output_root>/<run-name>/`, and checkpoints under
+`logs/<train.args.dir>/<generated-training-run>/save_models/`. With
+`skip_completed_runs = true`, rerunning the same config skips combinations that
+already have an evaluation JSON file.
+
+To inspect TensorBoard metrics while an experiment is running:
+
+```bash
+tensorboard --logdir logs/PatchSketch-Training
+```
 
 
 #### Reproducing multi epochs results
