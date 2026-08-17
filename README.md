@@ -17,7 +17,8 @@ Cifar10 and Cifar100 can be downloaded automatically in the script. ImageNet100 
 ## Getting started
 
 The current implementation supports CIFAR-10, CIFAR-100, and ImageNet-100.
-PatchSketch TOML experiments require Python 3.11 or newer.
+PatchSketch TOML experiments support Python 3.10 or newer; Python 3.10 uses the
+`tomli` compatibility package installed by the requirements files.
 
 ### 1. Create an environment
 

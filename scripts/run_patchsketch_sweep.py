@@ -7,9 +7,13 @@ import os
 import subprocess
 import sys
 import time
-import tomllib
 from datetime import datetime
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

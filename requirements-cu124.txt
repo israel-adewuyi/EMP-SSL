@@ -12,3 +12,4 @@ matplotlib
 scikit-learn
 tensorboard
 nvitop
+tomli>=2.0; python_version < "3.11"
