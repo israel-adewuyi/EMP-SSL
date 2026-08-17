@@ -261,11 +261,17 @@ else:
 
 # Load Model and Checkpoint
 net = encoder(arch=args.arch, norm=args.norm)
+save_dict = torch.load(args.model_path, map_location=device)
+if "state_dict" in save_dict and isinstance(save_dict["state_dict"], dict):
+    save_dict = save_dict["state_dict"]
+save_dict = {
+    (name[7:] if name.startswith("module.") else name): value
+    for name, value in save_dict.items()
+}
+net.load_state_dict(save_dict, strict=True)
+net = net.to(device)
 if device.type == "cuda" and torch.cuda.device_count() > 1:
     net = nn.DataParallel(net)
-save_dict = torch.load(args.model_path, map_location=device)
-net.load_state_dict(save_dict,strict=False)
-net = net.to(device)
 net.eval()
 results = test(net, memory_loader, test_loader, device)
 

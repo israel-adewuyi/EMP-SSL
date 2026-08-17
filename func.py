@@ -46,7 +46,9 @@ class WeightedKNNClassifier(Metric):
                 step. Defaults to False.
         """
 
-        super().__init__(dist_sync_on_step=dist_sync_on_step, compute_on_step=False)
+        # compute_on_step was removed from recent TorchMetrics releases. This metric is
+        # driven through explicit update()/compute() calls, so the old option is unnecessary.
+        super().__init__(dist_sync_on_step=dist_sync_on_step)
 
         self.k = k
         self.T = T

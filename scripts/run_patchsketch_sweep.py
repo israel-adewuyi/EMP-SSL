@@ -76,6 +76,9 @@ def load_sweep_config(config_path):
         ),
         "stop_on_failure": bool(sweep.get("stop_on_failure", True)),
         "skip_completed_runs": bool(sweep.get("skip_completed_runs", True)),
+        "skip_existing_checkpoints": bool(
+            sweep.get("skip_existing_checkpoints", True)
+        ),
         "train_args": require_table(train, "args", context="[train]"),
         "train_grid": train_grid,
         "train_flags": train.get("flags", {}),
@@ -258,23 +261,34 @@ def main():
 
         stage = "training"
         try:
-            train_started = time.perf_counter()
-            print(
-                f"[{datetime.now().isoformat(timespec='seconds')}] "
-                f"[{run_index}] TRAIN_START {run_slug}"
-            )
-            try:
-                run_and_tee(
-                    train_command,
-                    {"CUDA_VISIBLE_DEVICES": config["train_cuda_visible_devices"]},
-                    train_log_path,
+            if config["skip_existing_checkpoints"] and checkpoint_path.exists():
+                row["train_seconds"] = 0.0
+                row["training_status"] = "skipped_existing_checkpoint"
+                print(
+                    f"[{datetime.now().isoformat(timespec='seconds')}] "
+                    f"[{run_index}] TRAIN_SKIPPED existing_checkpoint={checkpoint_path}"
                 )
-            finally:
-                row["train_seconds"] = round(time.perf_counter() - train_started, 3)
-            print(
-                f"[{datetime.now().isoformat(timespec='seconds')}] "
-                f"[{run_index}] TRAIN_DONE seconds={row['train_seconds']:.3f}"
-            )
+            else:
+                train_started = time.perf_counter()
+                print(
+                    f"[{datetime.now().isoformat(timespec='seconds')}] "
+                    f"[{run_index}] TRAIN_START {run_slug}"
+                )
+                try:
+                    run_and_tee(
+                        train_command,
+                        {"CUDA_VISIBLE_DEVICES": config["train_cuda_visible_devices"]},
+                        train_log_path,
+                    )
+                finally:
+                    row["train_seconds"] = round(
+                        time.perf_counter() - train_started, 3
+                    )
+                row["training_status"] = "completed"
+                print(
+                    f"[{datetime.now().isoformat(timespec='seconds')}] "
+                    f"[{run_index}] TRAIN_DONE seconds={row['train_seconds']:.3f}"
+                )
 
             if not checkpoint_path.exists():
                 raise FileNotFoundError(f"Expected checkpoint not found: {checkpoint_path}")

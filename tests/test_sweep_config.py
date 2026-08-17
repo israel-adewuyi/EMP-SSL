@@ -21,6 +21,7 @@ class SweepConfigTests(unittest.TestCase):
         self.assertEqual(config["eval_args"]["lr"], 0.03)
         self.assertTrue(config["eval_args"]["linear"])
         self.assertEqual(config["eval_args"]["device"], "auto")
+        self.assertTrue(config["skip_existing_checkpoints"])
         self.assertTrue(config["output_root"].is_absolute())
 
     def test_grid_expands_to_one_config_per_combination(self):

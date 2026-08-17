@@ -13,6 +13,7 @@ Every setting in `patchsketch_cifar10.toml` is summarized below; values under
 | `sweep.eval_cuda_visible_devices` | Selects the GPU IDs visible to each evaluation subprocess. |
 | `sweep.stop_on_failure` | Stops the entire sweep when a run fails if set to `true`. |
 | `sweep.skip_completed_runs` | Reuses runs that already have an evaluation-results JSON file if set to `true`. |
+| `sweep.skip_existing_checkpoints` | Skips training when its checkpoint exists, allowing a failed evaluation to resume without retraining. |
 
 ## Training arguments
 

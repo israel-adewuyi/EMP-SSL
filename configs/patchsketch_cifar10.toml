@@ -5,6 +5,7 @@ train_cuda_visible_devices = "0"
 eval_cuda_visible_devices = "0"
 stop_on_failure = true
 skip_completed_runs = true
+skip_existing_checkpoints = true
 
 [train.args]
 data = "cifar10"

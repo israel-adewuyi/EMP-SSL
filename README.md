@@ -147,7 +147,9 @@ aggregate table to `<output_root>/summary.csv`, per-run logs and evaluation JSON
 under `<output_root>/<run-name>/`, and checkpoints under
 `logs/<train.args.dir>/<generated-training-run>/save_models/`. With
 `skip_completed_runs = true`, rerunning the same config skips combinations that
-already have an evaluation JSON file.
+already have an evaluation JSON file. With `skip_existing_checkpoints = true`, a
+run whose training succeeded but evaluation failed reuses its checkpoint and
+restarts directly from evaluation.
 
 To inspect TensorBoard metrics while an experiment is running:
 
